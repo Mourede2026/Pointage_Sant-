@@ -1,0 +1,176 @@
+/**
+ * POINTAGE SANTÉ — Backend Google Apps Script
+ * Déploiement : Web app, exécuter en tant que "Moi", accès "Tout le monde".
+ * Propriétés du script requises : ADMIN_PHONE, ADMIN_PASSWORD (voir README).
+ */
+const SHEET_ID = '1g5oXpZdWv64DptDHBRdx6ZTrDlEZW5p9wTW7XqY0MPc';
+const TZ = 'Africa/Porto-Novo';
+const SCHEMA = {
+  Structures: ['id', 'type', 'name', 'start', 'end'],
+  Zones: ['id', 'structureId', 'name', 'lat', 'lng', 'rad'],
+  Admins: ['phone', 'name', 'structureId', 'salt', 'hash'],
+  Agents: ['id', 'nom', 'pre', 'structureId', 'service', 'tel', 'salt', 'hash', 'sigUrl', 'fpUrl', 'created'],
+  Records: ['ref', 'ts', 'agentId', 'name', 'phone', 'structureId', 'structure', 'service', 'type', 'lat', 'lng', 'acc', 'place', 'inZone', 'late', 'fpUrl']
+};
+const TYPES = ['Centre de santé', 'Hôpital', 'Bureau de zone', 'Direction Départementale de la Santé'];
+
+/* ============ INSTALLATION : exécuter setup() une seule fois ============ */
+function setup() {
+  const book = SpreadsheetApp.openById(SHEET_ID);
+  Object.keys(SCHEMA).forEach(n => {
+    const s = book.getSheetByName(n) || book.insertSheet(n), h = SCHEMA[n];
+    s.getRange(1, 1, s.getMaxRows(), h.length).setNumberFormat('@'); // tout en texte
+    s.getRange(1, 1, 1, h.length).setValues([h]).setFontWeight('bold');
+    s.setFrozenRows(1);
+  });
+  const p = PropertiesService.getScriptProperties();
+  if (!p.getProperty('SECRET')) p.setProperty('SECRET', Utilities.getUuid() + Utilities.getUuid());
+  if (!p.getProperty('FOLDER_ID')) p.setProperty('FOLDER_ID', DriveApp.createFolder('PointageSante').getId());
+  Logger.log('Installation terminée. Ajoutez ADMIN_PHONE et ADMIN_PASSWORD dans les propriétés du script.');
+}
+
+/* ============ Utilitaires ============ */
+const prop = k => PropertiesService.getScriptProperties().getProperty(k);
+const book = () => SpreadsheetApp.openById(SHEET_ID);
+const digits = x => String(x || '').replace(/\D/g, '');
+function rows(n) {
+  const v = book().getSheetByName(n).getDataRange().getValues(), h = v.shift();
+  return v.filter(r => r[0] !== '').map(r => Object.fromEntries(h.map((k, i) => [k, String(r[i])])));
+}
+function add(n, o) { const h = SCHEMA[n]; book().getSheetByName(n).appendRow(h.map(k => o[k] === undefined ? '' : String(o[k]))); }
+function patch(n, key, val, o) {
+  const s = book().getSheetByName(n), v = s.getDataRange().getValues(), h = v[0], c = h.indexOf(key);
+  for (let i = 1; i < v.length; i++) if (String(v[i][c]) === String(val)) { Object.keys(o).forEach(k => s.getRange(i + 1, h.indexOf(k) + 1).setValue(String(o[k]))); return true; }
+  return false;
+}
+function del(n, key, val) {
+  const s = book().getSheetByName(n), v = s.getDataRange().getValues(), c = v[0].indexOf(key);
+  for (let i = v.length - 1; i >= 1; i--) if (String(v[i][c]) === String(val)) s.deleteRow(i + 1);
+}
+const hashPw = (salt, pw) => Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + pw));
+const newId = () => Utilities.getUuid().slice(0, 8).toUpperCase();
+function sign(p) {
+  const b = Utilities.base64EncodeWebSafe(JSON.stringify(p));
+  return b + '.' + Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(b, prop('SECRET')));
+}
+function verify(t) {
+  const [b, s] = String(t || '').split('.');
+  if (!b || !s || s !== Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(b, prop('SECRET')))) throw new Error('Session invalide');
+  const p = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(b)).getDataAsString());
+  if (p.exp < Date.now()) throw new Error('Session expirée, reconnectez-vous');
+  return p;
+}
+const tok = (role, id, extra) => sign(Object.assign({ role, id, exp: Date.now() + 12 * 3600e3 }, extra || {}));
+function saveImg(dataUrl, name) {
+  if (!dataUrl) return '';
+  const m = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
+  if (!m) return '';
+  const f = DriveApp.getFolderById(prop('FOLDER_ID')).createFile(Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], name));
+  f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  return 'https://lh3.googleusercontent.com/d/' + f.getId();
+}
+function dist(a, b, c, d) {
+  const r = x => x * Math.PI / 180, h = Math.sin(r(c - a) / 2) ** 2 + Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(r(d - b) / 2) ** 2;
+  return 12742000 * Math.asin(Math.sqrt(h));
+}
+
+/* ============ Point d'entrée ============ */
+function doGet() { return out({ ok: true, service: 'Pointage Santé' }); }
+function out(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
+function doPost(e) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+    const b = JSON.parse(e.postData.contents), fn = ACTIONS[b.action];
+    if (!fn) throw new Error('Action inconnue');
+    return out({ ok: true, data: fn(b) });
+  } catch (err) { return out({ ok: false, error: String(err.message || err) }); }
+  finally { try { lock.releaseLock(); } catch (x) {} }
+}
+
+/* ============ Actions ============ */
+const ACTIONS = {
+  structures() {
+    const z = rows('Zones');
+    return rows('Structures').map(s => ({ id: s.id, type: s.type, name: s.name, zones: z.filter(x => x.structureId === s.id).length }));
+  },
+  register(b) {
+    const tel = digits(b.tel);
+    if (!b.nom || !b.pre || !tel || !b.structureId || !/^\d{4,6}$/.test(b.pin || '')) throw new Error('Champs incomplets (code PIN : 4 à 6 chiffres)');
+    if (!b.sig || !b.fp) throw new Error('Signature et empreinte obligatoires');
+    if (rows('Agents').some(a => digits(a.tel) === tel)) throw new Error('Ce numéro est déjà enregistré');
+    const st = rows('Structures').find(s => s.id === b.structureId);
+    if (!st) throw new Error('Structure inconnue');
+    const id = newId(), salt = Utilities.getUuid();
+    add('Agents', { id, nom: b.nom.trim(), pre: b.pre.trim(), structureId: st.id, service: st.type === 'Hôpital' ? (b.service || '') : '', tel, salt, hash: hashPw(salt, b.pin),
+      sigUrl: saveImg(b.sig, 'sig-' + id + '.png'), fpUrl: saveImg(b.fp, 'fp-' + id + '.jpg'), created: new Date().toISOString() });
+    return { token: tok('agent', id) };
+  },
+  login(b) {
+    const a = rows('Agents').find(x => digits(x.tel) === digits(b.tel));
+    if (!a || a.hash !== hashPw(a.salt, b.pin || '')) throw new Error('Numéro ou code PIN incorrect');
+    return { token: tok('agent', a.id) };
+  },
+  adminLogin(b) {
+    const tel = digits(b.tel);
+    if (tel && tel === digits(prop('ADMIN_PHONE')) && b.password === prop('ADMIN_PASSWORD')) return { token: tok('platform', tel) };
+    const a = rows('Admins').find(x => digits(x.phone) === tel);
+    if (!a || a.hash !== hashPw(a.salt, b.password || '')) throw new Error('Identifiants incorrects');
+    return { token: tok('structure', tel, { structureId: a.structureId }) };
+  },
+  me(b) {
+    const s = verify(b.token); if (s.role !== 'agent') throw new Error('Accès refusé');
+    const a = rows('Agents').find(x => x.id === s.id); if (!a) throw new Error('Agent introuvable');
+    const st = rows('Structures').find(x => x.id === a.structureId) || {};
+    return { id: a.id, nom: a.nom, pre: a.pre, service: a.service, structure: st.type + ' — ' + st.name };
+  },
+  myMonth(b) {
+    const s = verify(b.token); if (s.role !== 'agent') throw new Error('Accès refusé');
+    const m = /^\d{4}-\d{2}$/.test(b.month || '') ? b.month : Utilities.formatDate(new Date(), TZ, 'yyyy-MM');
+    const a = rows('Agents').find(x => x.id === s.id), st = rows('Structures').find(x => x.id === a.structureId) || {};
+    const recs = rows('Records').filter(r => r.agentId === a.id).map(r => {
+      const d = new Date(r.ts);
+      return { day: Utilities.formatDate(d, TZ, 'yyyy-MM-dd'), time: Utilities.formatDate(d, TZ, 'HH:mm'), type: r.type, late: r.late, inZone: r.inZone, place: r.place };
+    }).filter(r => r.day.slice(0, 7) === m).sort((x, y) => (x.day + x.time).localeCompare(y.day + y.time));
+    return { month: m, today: Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), start: st.start || '08:00', end: st.end || '17:00', records: recs };
+  },
+  punch(b) {
+    const s = verify(b.token); if (s.role !== 'agent') throw new Error('Accès refusé');
+    const a = rows('Agents').find(x => x.id === s.id), st = rows('Structures').find(x => x.id === a.structureId);
+    const lat = +b.lat, lng = +b.lng;
+    if (!isFinite(lat) || !isFinite(lng)) throw new Error('Position GPS obligatoire');
+    if (!b.fp) throw new Error('Empreinte obligatoire');
+    if (b.type !== 'arrivee' && b.type !== 'depart') throw new Error('Type invalide');
+    const zones = rows('Zones').filter(z => z.structureId === st.id);
+    let addr = '';
+    try { addr = Maps.newGeocoder().setLanguage('fr').reverseGeocode(lat, lng).results[0].formatted_address; } catch (e) { addr = lat.toFixed(5) + ', ' + lng.toFixed(5); }
+    let inZone = 'n/a', place = addr, best = 1e12, hit = null;
+    zones.forEach(z => { const d = dist(lat, lng, +z.lat, +z.lng); best = Math.min(best, d); if (d <= +z.rad && !hit) hit = z; });
+    if (zones.length) { if (hit) { inZone = 'oui'; place = hit.name + ' (' + addr + ')'; } else { inZone = 'non'; place = 'HORS ZONE à ' + Math.round(best) + ' m — ' + addr; } }
+    const now = new Date(), hm = Utilities.formatDate(now, TZ, 'HH:mm'), ref = Utilities.formatDate(now, TZ, 'yyyyMMdd') + '-' + newId().slice(0, 5);
+    const rec = { ref, ts: now.toISOString(), agentId: a.id, name: a.pre + ' ' + a.nom, phone: a.tel, structureId: st.id, structure: st.type + ' — ' + st.name, service: a.service,
+      type: b.type, lat, lng, acc: Math.round(+b.acc || 0), place, inZone, late: b.type === 'arrivee' && hm > (st.start || '08:00') ? 'oui' : 'non', fpUrl: saveImg(b.fp, 'fp-' + ref + '.jpg') };
+    add('Records', rec);
+    return rec;
+  },
+  adminData(b) {
+    const s = verify(b.token), plat = s.role === 'platform';
+    if (!plat && s.role !== 'structure') throw new Error('Accès refusé');
+    const ok = x => plat || x.structureId === s.structureId, safe = a => ({ id: a.id, nom: a.nom, pre: a.pre, structureId: a.structureId, service: a.service, tel: a.tel, sigUrl: a.sigUrl, fpUrl: a.fpUrl, created: a.created });
+    return { role: s.role, structures: rows('Structures').filter(x => plat || x.id === s.structureId), zones: rows('Zones').filter(ok), agents: rows('Agents').filter(ok).map(safe),
+      records: rows('Records').filter(ok).sort((x, y) => y.ts.localeCompare(x.ts)).slice(0, 1000),
+      admins: plat ? rows('Admins').map(a => ({ phone: a.phone, name: a.name, structureId: a.structureId })) : [] };
+  },
+  saveStructure(b) { platform(b); if (!TYPES.includes(b.type) || !b.name) throw new Error('Type et nom requis'); add('Structures', { id: 'S' + newId(), type: b.type, name: b.name.trim(), start: b.start || '08:00', end: b.end || '17:00' }); return 1; },
+  deleteStructure(b) { platform(b); del('Structures', 'id', b.id); del('Zones', 'structureId', b.id); return 1; },
+  addZone(b) { platform(b); add('Zones', { id: 'Z' + newId(), structureId: b.structureId, name: b.name, lat: b.lat, lng: b.lng, rad: b.rad || 150 }); return 1; },
+  deleteZone(b) { platform(b); del('Zones', 'id', b.id); return 1; },
+  addAdmin(b) {
+    platform(b); const phone = digits(b.phone);
+    if (!phone || !b.password || b.password.length < 6) throw new Error('Téléphone et mot de passe (6+ caractères) requis');
+    const salt = Utilities.getUuid(), rec = { phone, name: b.name, structureId: b.structureId, salt, hash: hashPw(salt, b.password) };
+    if (rows('Admins').some(a => digits(a.phone) === phone)) patch('Admins', 'phone', phone, rec); else add('Admins', rec); return 1;
+  },
+  deleteAdmin(b) { platform(b); del('Admins', 'phone', digits(b.phone)); return 1; }
+};
+function platform(b) { if (verify(b.token).role !== 'platform') throw new Error('Réservé à l’administrateur de la plateforme'); }
