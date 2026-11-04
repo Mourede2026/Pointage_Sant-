@@ -26,13 +26,15 @@ Architecture : **GitHub Pages** (page `index.html`) → **Google Apps Script** (
 3. **Administrateurs** : créez le compte de l'administrateur de chaque structure.
 4. Les agents ouvrent le lien, font leur **première inscription**, puis se connectent avec téléphone + PIN.
 
-## 4. Sécurité et limites
-- L'empreinte est une **photo** conservée pour contrôle visuel par l'administrateur : il n'y a pas de reconnaissance biométrique automatique.
-- Les images sont dans Drive avec « lien accessible à tous ceux qui l'ont » : ne partagez pas ces liens. Pour plus de confidentialité, restreignez le partage et servez les fichiers via le script.
-- L'heure de retard et la zone sont calculées côté serveur (fuseau Africa/Porto-Novo) : l'agent ne peut pas les modifier.
+## 4. Zone de travail et sécurité
+- **Pointage uniquement dans la zone :** hors de la zone (plus la tolérance), le pointage est **refusé**. La tentative est enregistrée dans l'onglet Records avec `status = refusé`, visible par l'administrateur.
+- **Délimiter une enceinte clôturée :** Administration > Structures > « + Zone clôturée (polygone) ». Placez-vous à chaque angle de la clôture, dans l'ordre, et appuyez sur « Point ici » (minimum 3 points), puis « Terminer ». La tolérance (20 m par défaut) accepte les petites erreurs GPS près de la clôture. Une « Zone circulaire » reste possible pour un petit site.
+- **Précision GPS :** un signal plus imprécis que 60 m (constante `MAX_ACC` dans `Code.gs`) est refusé avec le message de réessayer à l'air libre.
+- **Plus de photo d'empreinte :** l'agent s'identifie par téléphone + PIN. Une vérification biométrique réelle demande WebAuthn (empreinte du téléphone) ou un lecteur fixe.
+- Une position GPS peut être falsifiée par une application de fausse localisation : le serveur ne peut pas le détecter avec certitude. Les tentatives refusées et la précision (`acc`) enregistrées aident à repérer les cas douteux.
+- Les images (signatures) sont dans Drive avec « lien accessible à tous ceux qui l'ont » : ne partagez pas ces liens.
 - Le Sheet contient des données personnelles : limitez son partage aux administrateurs de la plateforme.
-- La géolocalisation du navigateur peut être falsifiée sur un téléphone modifié ; la précision GPS (`acc`) est enregistrée pour aider à détecter les cas douteux.
-- Quotas Apps Script gratuits : suffisants pour un centre, à surveiller pour un déploiement départemental.
+- **Mise à jour depuis une version précédente :** collez le nouveau `Code.gs`, relancez `setup()` (il ajoute les colonnes `poly`, `tol` et `status`), puis créez une nouvelle version du déploiement. Les anciennes zones circulaires restent valides.
 
 ## 5. Installer l'application sur le téléphone
 La page doit être ouverte en **HTTPS** (GitHub Pages l'est).

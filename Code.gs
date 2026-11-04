@@ -5,12 +5,13 @@
  */
 const SHEET_ID = '1g5oXpZdWv64DptDHBRdx6ZTrDlEZW5p9wTW7XqY0MPc';
 const TZ = 'Africa/Porto-Novo';
+const MAX_ACC = 60; // précision GPS maximale acceptée (mètres)
 const SCHEMA = {
   Structures: ['id', 'type', 'name', 'start', 'end'],
-  Zones: ['id', 'structureId', 'name', 'lat', 'lng', 'rad'],
+  Zones: ['id', 'structureId', 'name', 'lat', 'lng', 'rad', 'poly', 'tol'],
   Admins: ['phone', 'name', 'structureId', 'salt', 'hash'],
   Agents: ['id', 'nom', 'pre', 'structureId', 'service', 'tel', 'salt', 'hash', 'sigUrl', 'fpUrl', 'created'],
-  Records: ['ref', 'ts', 'agentId', 'name', 'phone', 'structureId', 'structure', 'service', 'type', 'lat', 'lng', 'acc', 'place', 'inZone', 'late', 'fpUrl']
+  Records: ['ref', 'ts', 'agentId', 'name', 'phone', 'structureId', 'structure', 'service', 'type', 'lat', 'lng', 'acc', 'place', 'inZone', 'late', 'fpUrl', 'status']
 };
 const TYPES = ['Centre de santé', 'Hôpital', 'Bureau de zone', 'Direction Départementale de la Santé'];
 
@@ -69,6 +70,30 @@ function saveImg(dataUrl, name) {
   f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   return 'https://lh3.googleusercontent.com/d/' + f.getId();
 }
+function inPoly(lat, lng, poly) {
+  let c = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const yi = poly[i][0], xi = poly[i][1], yj = poly[j][0], xj = poly[j][1];
+    if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) c = !c;
+  }
+  return c;
+}
+function distSeg(lat, lng, a, b) {
+  const k = Math.cos(lat * Math.PI / 180), m = 111320;
+  const px = (lng - a[1]) * k * m, py = (lat - a[0]) * m, bx = (b[1] - a[1]) * k * m, by = (b[0] - a[0]) * m, l = bx * bx + by * by;
+  const t = l ? Math.max(0, Math.min(1, (px * bx + py * by) / l)) : 0;
+  return Math.hypot(px - t * bx, py - t * by);
+}
+// Distance (m) entre le point et la zone : 0 si à l'intérieur
+function zoneDist(z, lat, lng) {
+  if (z.poly) {
+    const poly = JSON.parse(z.poly);
+    if (inPoly(lat, lng, poly)) return 0;
+    let m = 1e12; for (let i = 0; i < poly.length; i++) m = Math.min(m, distSeg(lat, lng, poly[i], poly[(i + 1) % poly.length]));
+    return m;
+  }
+  return Math.max(0, dist(lat, lng, +z.lat, +z.lng) - (+z.rad || 150));
+}
 function dist(a, b, c, d) {
   const r = x => x * Math.PI / 180, h = Math.sin(r(c - a) / 2) ** 2 + Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(r(d - b) / 2) ** 2;
   return 12742000 * Math.asin(Math.sqrt(h));
@@ -97,7 +122,7 @@ const ACTIONS = {
   register(b) {
     const tel = digits(b.tel);
     if (!b.nom || !b.pre || !tel || !b.structureId || !/^\d{4,6}$/.test(b.pin || '')) throw new Error('Champs incomplets (code PIN : 4 à 6 chiffres)');
-    if (!b.sig || !b.fp) throw new Error('Signature et empreinte obligatoires');
+    if (!b.sig) throw new Error('La signature est obligatoire');
     if (rows('Agents').some(a => digits(a.tel) === tel)) throw new Error('Ce numéro est déjà enregistré');
     const st = rows('Structures').find(s => s.id === b.structureId);
     if (!st) throw new Error('Structure inconnue');
@@ -129,7 +154,7 @@ const ACTIONS = {
     const s = verify(b.token); if (s.role !== 'agent') throw new Error('Accès refusé');
     const m = /^\d{4}-\d{2}$/.test(b.month || '') ? b.month : Utilities.formatDate(new Date(), TZ, 'yyyy-MM');
     const a = rows('Agents').find(x => x.id === s.id), st = rows('Structures').find(x => x.id === a.structureId) || {};
-    const recs = rows('Records').filter(r => r.agentId === a.id).map(r => {
+    const recs = rows('Records').filter(r => r.agentId === a.id && r.status !== 'refusé').map(r => {
       const d = new Date(r.ts);
       return { day: Utilities.formatDate(d, TZ, 'yyyy-MM-dd'), time: Utilities.formatDate(d, TZ, 'HH:mm'), type: r.type, late: r.late, inZone: r.inZone, place: r.place };
     }).filter(r => r.day.slice(0, 7) === m).sort((x, y) => (x.day + x.time).localeCompare(y.day + y.time));
@@ -138,20 +163,22 @@ const ACTIONS = {
   punch(b) {
     const s = verify(b.token); if (s.role !== 'agent') throw new Error('Accès refusé');
     const a = rows('Agents').find(x => x.id === s.id), st = rows('Structures').find(x => x.id === a.structureId);
-    const lat = +b.lat, lng = +b.lng;
+    const lat = +b.lat, lng = +b.lng, acc = Math.round(+b.acc || 0);
     if (!isFinite(lat) || !isFinite(lng)) throw new Error('Position GPS obligatoire');
-    if (!b.fp) throw new Error('Empreinte obligatoire');
     if (b.type !== 'arrivee' && b.type !== 'depart') throw new Error('Type invalide');
+    if (acc > MAX_ACC) throw new Error('Signal GPS trop imprécis (± ' + acc + ' m). Sortez à l’air libre, attendez quelques secondes et réessayez.');
     const zones = rows('Zones').filter(z => z.structureId === st.id);
+    if (!zones.length) throw new Error('Aucune zone de travail n’est définie pour votre structure. Contactez l’administrateur.');
+    let best = 1e12, hit = null;
+    zones.forEach(z => { const d = zoneDist(z, lat, lng); best = Math.min(best, d); if (!hit && d <= (z.tol === '' ? 20 : +z.tol)) hit = z; });
     let addr = '';
     try { addr = Maps.newGeocoder().setLanguage('fr').reverseGeocode(lat, lng).results[0].formatted_address; } catch (e) { addr = lat.toFixed(5) + ', ' + lng.toFixed(5); }
-    let inZone = 'n/a', place = addr, best = 1e12, hit = null;
-    zones.forEach(z => { const d = dist(lat, lng, +z.lat, +z.lng); best = Math.min(best, d); if (d <= +z.rad && !hit) hit = z; });
-    if (zones.length) { if (hit) { inZone = 'oui'; place = hit.name + ' (' + addr + ')'; } else { inZone = 'non'; place = 'HORS ZONE à ' + Math.round(best) + ' m — ' + addr; } }
     const now = new Date(), hm = Utilities.formatDate(now, TZ, 'HH:mm'), ref = Utilities.formatDate(now, TZ, 'yyyyMMdd') + '-' + newId().slice(0, 5);
     const rec = { ref, ts: now.toISOString(), agentId: a.id, name: a.pre + ' ' + a.nom, phone: a.tel, structureId: st.id, structure: st.type + ' — ' + st.name, service: a.service,
-      type: b.type, lat, lng, acc: Math.round(+b.acc || 0), place, inZone, late: b.type === 'arrivee' && hm > (st.start || '08:00') ? 'oui' : 'non', fpUrl: saveImg(b.fp, 'fp-' + ref + '.jpg') };
+      type: b.type, lat, lng, acc, place: hit ? hit.name + ' (' + addr + ')' : 'HORS ZONE à ' + Math.round(best) + ' m — ' + addr, inZone: hit ? 'oui' : 'non',
+      late: hit && b.type === 'arrivee' && hm > (st.start || '08:00') ? 'oui' : 'non', fpUrl: '', status: hit ? 'valide' : 'refusé' };
     add('Records', rec);
+    if (!hit) throw new Error('Pointage refusé : vous êtes hors de la zone de travail (à environ ' + Math.round(best) + ' m). La tentative a été enregistrée.');
     return rec;
   },
   adminData(b) {
@@ -164,7 +191,16 @@ const ACTIONS = {
   },
   saveStructure(b) { platform(b); if (!TYPES.includes(b.type) || !b.name) throw new Error('Type et nom requis'); add('Structures', { id: 'S' + newId(), type: b.type, name: b.name.trim(), start: b.start || '08:00', end: b.end || '17:00' }); return 1; },
   deleteStructure(b) { platform(b); del('Structures', 'id', b.id); del('Zones', 'structureId', b.id); return 1; },
-  addZone(b) { platform(b); add('Zones', { id: 'Z' + newId(), structureId: b.structureId, name: b.name, lat: b.lat, lng: b.lng, rad: b.rad || 150 }); return 1; },
+  addZone(b) {
+    platform(b); let lat = b.lat, lng = b.lng, poly = '';
+    if (Array.isArray(b.poly) && b.poly.length) {
+      if (b.poly.length < 3) throw new Error('Au moins 3 points sont nécessaires');
+      const pts = b.poly.map(p => [+p[0], +p[1]]); poly = JSON.stringify(pts);
+      lat = pts.reduce((t, p) => t + p[0], 0) / pts.length; lng = pts.reduce((t, p) => t + p[1], 0) / pts.length;
+    }
+    add('Zones', { id: 'Z' + newId(), structureId: b.structureId, name: b.name, lat, lng, rad: b.rad || '', poly, tol: b.tol === undefined || b.tol === '' ? 20 : b.tol });
+    return 1;
+  },
   deleteZone(b) { platform(b); del('Zones', 'id', b.id); return 1; },
   addAdmin(b) {
     platform(b); const phone = digits(b.phone);
