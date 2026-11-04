@@ -8,7 +8,7 @@ const TZ = 'Africa/Porto-Novo';
 const MAX_ACC = 60; // précision GPS maximale acceptée (mètres)
 const SCHEMA = {
   Structures: ['id', 'type', 'name', 'start', 'end'],
-  Zones: ['id', 'structureId', 'name', 'lat', 'lng', 'rad', 'poly', 'tol'],
+  Zones: ['id', 'structureId', 'name', 'lat', 'lng', 'rad', 'poly', 'tol', 'by', 'at'],
   Admins: ['phone', 'name', 'structureId', 'salt', 'hash'],
   Agents: ['id', 'nom', 'pre', 'structureId', 'service', 'tel', 'salt', 'hash', 'sigUrl', 'fpUrl', 'created'],
   Records: ['ref', 'ts', 'agentId', 'name', 'phone', 'structureId', 'structure', 'service', 'type', 'lat', 'lng', 'acc', 'place', 'inZone', 'late', 'fpUrl', 'status']
@@ -192,16 +192,16 @@ const ACTIONS = {
   saveStructure(b) { platform(b); if (!TYPES.includes(b.type) || !b.name) throw new Error('Type et nom requis'); add('Structures', { id: 'S' + newId(), type: b.type, name: b.name.trim(), start: b.start || '08:00', end: b.end || '17:00' }); return 1; },
   deleteStructure(b) { platform(b); del('Structures', 'id', b.id); del('Zones', 'structureId', b.id); return 1; },
   addZone(b) {
-    platform(b); let lat = b.lat, lng = b.lng, poly = '';
+    const who = zoneAuth(b, b.structureId); let lat = b.lat, lng = b.lng, poly = '';
     if (Array.isArray(b.poly) && b.poly.length) {
       if (b.poly.length < 3) throw new Error('Au moins 3 points sont nécessaires');
       const pts = b.poly.map(p => [+p[0], +p[1]]); poly = JSON.stringify(pts);
       lat = pts.reduce((t, p) => t + p[0], 0) / pts.length; lng = pts.reduce((t, p) => t + p[1], 0) / pts.length;
     }
-    add('Zones', { id: 'Z' + newId(), structureId: b.structureId, name: b.name, lat, lng, rad: b.rad || '', poly, tol: b.tol === undefined || b.tol === '' ? 20 : b.tol });
+    add('Zones', { id: 'Z' + newId(), structureId: b.structureId, name: b.name, lat, lng, rad: b.rad || '', poly, tol: b.tol === undefined || b.tol === '' ? 20 : b.tol, by: who, at: new Date().toISOString() });
     return 1;
   },
-  deleteZone(b) { platform(b); del('Zones', 'id', b.id); return 1; },
+  deleteZone(b) { const z = rows('Zones').find(x => x.id === b.id); if (!z) throw new Error('Zone introuvable'); zoneAuth(b, z.structureId); del('Zones', 'id', b.id); return 1; },
   addAdmin(b) {
     platform(b); const phone = digits(b.phone);
     if (!phone || !b.password || b.password.length < 6) throw new Error('Téléphone et mot de passe (6+ caractères) requis');
@@ -210,6 +210,16 @@ const ACTIONS = {
   },
   deleteAdmin(b) { platform(b); del('Admins', 'phone', digits(b.phone)); return 1; }
 };
+// Autorise l'administrateur de la plateforme, ou l'administrateur de la structure concernée. Retourne son nom (traçabilité).
+function zoneAuth(b, structureId) {
+  const s = verify(b.token);
+  if (s.role === 'platform') return 'Administrateur plateforme';
+  if (s.role === 'structure' && String(s.structureId) === String(structureId)) {
+    const a = rows('Admins').find(x => digits(x.phone) === digits(s.id));
+    return 'Admin structure : ' + (a ? a.name : s.id);
+  }
+  throw new Error('Vous ne pouvez modifier que la zone de votre structure');
+}
 function platform(b) { if (verify(b.token).role !== 'platform') throw new Error('Réservé à l’administrateur de la plateforme'); }
 
 /* Diagnostic : exécutez cette fonction dans l'éditeur puis ouvrez Affichage > Journaux d'exécution */

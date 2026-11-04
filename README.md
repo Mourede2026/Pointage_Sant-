@@ -28,13 +28,14 @@ Architecture : **GitHub Pages** (page `index.html`) → **Google Apps Script** (
 
 ## 4. Zone de travail et sécurité
 - **Pointage uniquement dans la zone :** hors de la zone (plus la tolérance), le pointage est **refusé**. La tentative est enregistrée dans l'onglet Records avec `status = refusé`, visible par l'administrateur.
-- **Délimiter une enceinte clôturée :** Administration > Structures > « + Zone clôturée (polygone) ». Placez-vous à chaque angle de la clôture, dans l'ordre, et appuyez sur « Point ici » (minimum 3 points), puis « Terminer ». La tolérance (20 m par défaut) accepte les petites erreurs GPS près de la clôture. Une « Zone circulaire » reste possible pour un petit site.
+- **Qui définit la zone :** chaque administrateur de structure délimite lui-même la zone de **sa** structure (onglet « Zone de travail »), sur place. L'administrateur de la plateforme voit et peut modifier toutes les zones. Chaque zone garde le nom de son auteur et la date (colonnes `by` et `at` de l'onglet Zones).
+- **Délimiter une enceinte clôturée :** Zone de travail (ou Structures pour la plateforme) > « + Zone clôturée (polygone) ». Placez-vous à chaque angle de la clôture, dans l'ordre, et appuyez sur « Point ici » (minimum 3 points), puis « Terminer ». La tolérance (20 m par défaut) accepte les petites erreurs GPS près de la clôture. Une « Zone circulaire » reste possible pour un petit site.
 - **Précision GPS :** un signal plus imprécis que 60 m (constante `MAX_ACC` dans `Code.gs`) est refusé avec le message de réessayer à l'air libre.
 - **Plus de photo d'empreinte :** l'agent s'identifie par téléphone + PIN. Une vérification biométrique réelle demande WebAuthn (empreinte du téléphone) ou un lecteur fixe.
 - Une position GPS peut être falsifiée par une application de fausse localisation : le serveur ne peut pas le détecter avec certitude. Les tentatives refusées et la précision (`acc`) enregistrées aident à repérer les cas douteux.
 - Les images (signatures) sont dans Drive avec « lien accessible à tous ceux qui l'ont » : ne partagez pas ces liens.
 - Le Sheet contient des données personnelles : limitez son partage aux administrateurs de la plateforme.
-- **Mise à jour depuis une version précédente :** collez le nouveau `Code.gs`, relancez `setup()` (il ajoute les colonnes `poly`, `tol` et `status`), puis créez une nouvelle version du déploiement. Les anciennes zones circulaires restent valides.
+- **Mise à jour depuis une version précédente :** collez le nouveau `Code.gs`, relancez `setup()` (il ajoute les colonnes `poly`, `tol`, `status`, `by` et `at`), puis créez une nouvelle version du déploiement. Les anciennes zones circulaires restent valides.
 
 ## 5. Installer l'application sur le téléphone
 La page doit être ouverte en **HTTPS** (GitHub Pages l'est).
