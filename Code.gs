@@ -10,7 +10,8 @@ const SCHEMA = {
   Structures: ['id', 'type', 'name', 'start', 'end'],
   Zones: ['id', 'structureId', 'name', 'lat', 'lng', 'rad', 'poly', 'tol', 'by', 'at'],
   Admins: ['phone', 'name', 'structureId', 'salt', 'hash'],
-  Agents: ['id', 'nom', 'pre', 'structureId', 'service', 'tel', 'salt', 'hash', 'sigUrl', 'fpUrl', 'created'],
+  Agents: ['id', 'nom', 'pre', 'structureId', 'service', 'tel', 'salt', 'hash', 'sigUrl', 'fpUrl', 'created', 'qualif'],
+  Declarations: ['id', 'agentId', 'name', 'structureId', 'type', 'start', 'end', 'motif', 'created'],
   Records: ['ref', 'ts', 'agentId', 'name', 'phone', 'structureId', 'structure', 'service', 'type', 'lat', 'lng', 'acc', 'place', 'inZone', 'late', 'fpUrl', 'status']
 };
 const TYPES = ['Centre de santé', 'Hôpital', 'Bureau de zone', 'Direction Départementale de la Santé'];
@@ -31,6 +32,7 @@ function setup() {
 }
 
 /* ============ Utilitaires ============ */
+const localDay = ts => new Date(new Date(ts).getTime() + 3600e3).toISOString().slice(0, 10); // Bénin = UTC+1, sans changement d'heure
 const prop = k => PropertiesService.getScriptProperties().getProperty(k);
 const book = () => SpreadsheetApp.openById(SHEET_ID);
 const digits = x => String(x || '').replace(/\D/g, '');
@@ -121,14 +123,14 @@ const ACTIONS = {
   },
   register(b) {
     const tel = digits(b.tel);
-    if (!b.nom || !b.pre || !tel || !b.structureId || !/^\d{4,6}$/.test(b.pin || '')) throw new Error('Champs incomplets (code PIN : 4 à 6 chiffres)');
+    if (!b.nom || !b.pre || !String(b.qualif || '').trim() || !tel || !b.structureId || !/^\d{4,6}$/.test(b.pin || '')) throw new Error('Champs incomplets (code PIN : 4 à 6 chiffres)');
     if (!b.sig) throw new Error('La signature est obligatoire');
     if (rows('Agents').some(a => digits(a.tel) === tel)) throw new Error('Ce numéro est déjà enregistré');
     const st = rows('Structures').find(s => s.id === b.structureId);
     if (!st) throw new Error('Structure inconnue');
     const id = newId(), salt = Utilities.getUuid();
     add('Agents', { id, nom: b.nom.trim(), pre: b.pre.trim(), structureId: st.id, service: st.type === 'Hôpital' ? (b.service || '') : '', tel, salt, hash: hashPw(salt, b.pin),
-      sigUrl: saveImg(b.sig, 'sig-' + id + '.png'), fpUrl: saveImg(b.fp, 'fp-' + id + '.jpg'), created: new Date().toISOString() });
+      sigUrl: saveImg(b.sig, 'sig-' + id + '.png'), fpUrl: '', created: new Date().toISOString(), qualif: String(b.qualif).trim().slice(0, 80) });
     return { token: tok('agent', id) };
   },
   login(b) {
@@ -158,7 +160,8 @@ const ACTIONS = {
       const d = new Date(r.ts);
       return { day: Utilities.formatDate(d, TZ, 'yyyy-MM-dd'), time: Utilities.formatDate(d, TZ, 'HH:mm'), type: r.type, late: r.late, inZone: r.inZone, place: r.place };
     }).filter(r => r.day.slice(0, 7) === m).sort((x, y) => (x.day + x.time).localeCompare(y.day + y.time));
-    return { month: m, today: Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), start: st.start || '08:00', end: st.end || '17:00', records: recs };
+    const dec = rows('Declarations').filter(d => d.agentId === a.id && d.start <= m + '-31' && d.end >= m + '-01').sort((x, y) => y.created.localeCompare(x.created));
+    return { decl: dec, month: m, today: Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), start: st.start || '08:00', end: st.end || '17:00', records: recs };
   },
   punch(b) {
     const s = verify(b.token); if (s.role !== 'agent') throw new Error('Accès refusé');
@@ -184,10 +187,46 @@ const ACTIONS = {
   adminData(b) {
     const s = verify(b.token), plat = s.role === 'platform';
     if (!plat && s.role !== 'structure') throw new Error('Accès refusé');
-    const ok = x => plat || x.structureId === s.structureId, safe = a => ({ id: a.id, nom: a.nom, pre: a.pre, structureId: a.structureId, service: a.service, tel: a.tel, sigUrl: a.sigUrl, fpUrl: a.fpUrl, created: a.created });
+    const ok = x => plat || x.structureId === s.structureId, dt = /^\d{4}-\d{2}-\d{2}$/,
+      from = dt.test(b.from || '') ? b.from : '', to = dt.test(b.to || '') ? b.to : '',
+      safe = a => ({ id: a.id, nom: a.nom, pre: a.pre, qualif: a.qualif, structureId: a.structureId, service: a.service, tel: a.tel, sigUrl: a.sigUrl, created: a.created });
+    let recs = rows('Records').filter(ok);
+    if (from && to) recs = recs.filter(r => { const d = localDay(r.ts); return d >= from && d <= to; });
+    recs.sort((x, y) => y.ts.localeCompare(x.ts));
     return { role: s.role, structures: rows('Structures').filter(x => plat || x.id === s.structureId), zones: rows('Zones').filter(ok), agents: rows('Agents').filter(ok).map(safe),
-      records: rows('Records').filter(ok).sort((x, y) => y.ts.localeCompare(x.ts)).slice(0, 1000),
+      records: recs.slice(0, 5000), declarations: rows('Declarations').filter(ok).filter(d => !from || !to || (d.start <= to && d.end >= from)).sort((x, y) => y.created.localeCompare(x.created)),
       admins: plat ? rows('Admins').map(a => ({ phone: a.phone, name: a.name, structureId: a.structureId })) : [] };
+  },
+  declare(b) {
+    const s = verify(b.token); if (s.role !== 'agent') throw new Error('Accès refusé');
+    const a = rows('Agents').find(x => x.id === s.id), dt = /^\d{4}-\d{2}-\d{2}$/;
+    if (!['mission', 'permission', 'absence', 'conge'].includes(b.type)) throw new Error('Type invalide');
+    if (!dt.test(b.start || '') || !dt.test(b.end || '') || b.end < b.start) throw new Error('Dates invalides');
+    if ((new Date(b.end) - new Date(b.start)) / 864e5 > 365) throw new Error('Période trop longue (365 jours maximum)');
+    add('Declarations', { id: 'D' + newId(), agentId: a.id, name: a.pre + ' ' + a.nom, structureId: a.structureId, type: b.type, start: b.start, end: b.end, motif: String(b.motif || '').trim().slice(0, 200), created: new Date().toISOString() });
+    return 1;
+  },
+  cancelDeclaration(b) {
+    const s = verify(b.token), d = rows('Declarations').find(x => x.id === b.id);
+    if (!d) throw new Error('Déclaration introuvable');
+    if (!(s.role === 'platform' || (s.role === 'agent' && d.agentId === s.id) || (s.role === 'structure' && d.structureId === s.structureId))) throw new Error('Accès refusé');
+    del('Declarations', 'id', b.id); return 1;
+  },
+  setQualif(b) {
+    const s = verify(b.token); if (s.role !== 'platform' && s.role !== 'structure') throw new Error('Accès refusé');
+    const a = rows('Agents').find(x => x.id === b.agentId);
+    if (!a || (s.role === 'structure' && a.structureId !== s.structureId)) throw new Error('Accès refusé');
+    patch('Agents', 'id', a.id, { qualif: String(b.qualif || '').trim().slice(0, 80) }); return 1;
+  },
+  // Signatures (images) des agents, pour l'export du registre
+  signatures(b) {
+    const s = verify(b.token); if (s.role !== 'platform' && s.role !== 'structure') throw new Error('Accès refusé');
+    const ids = (b.ids || []).slice(0, 300), out = {};
+    rows('Agents').filter(a => ids.includes(a.id) && (s.role === 'platform' || a.structureId === s.structureId)).forEach(a => {
+      const m = /\/d\/([\w-]+)/.exec(a.sigUrl || ''); if (!m) return;
+      try { const bl = DriveApp.getFileById(m[1]).getBlob(); out[a.id] = 'data:' + bl.getContentType() + ';base64,' + Utilities.base64Encode(bl.getBytes()); } catch (x) {}
+    });
+    return out;
   },
   saveStructure(b) { platform(b); if (!TYPES.includes(b.type) || !b.name) throw new Error('Type et nom requis'); add('Structures', { id: 'S' + newId(), type: b.type, name: b.name.trim(), start: b.start || '08:00', end: b.end || '17:00' }); return 1; },
   deleteStructure(b) { platform(b); del('Structures', 'id', b.id); del('Zones', 'structureId', b.id); return 1; },

@@ -37,7 +37,14 @@ Architecture : **GitHub Pages** (page `index.html`) → **Google Apps Script** (
 - Le Sheet contient des données personnelles : limitez son partage aux administrateurs de la plateforme.
 - **Mise à jour depuis une version précédente :** collez le nouveau `Code.gs`, relancez `setup()` (il ajoute les colonnes `poly`, `tol`, `status`, `by` et `at`), puis créez une nouvelle version du déploiement. Les anciennes zones circulaires restent valides.
 
-## 5. Installer l'application sur le téléphone
+## 5. Disponibilités et registre
+- **Déclarations de l'agent :** mission, congé, permission ou absence, avec dates et motif. Les jours concernés sont marqués automatiquement (en bleu dans son calendrier et dans le registre). Elles sont prises en compte immédiatement ; l'agent ou son administrateur peut les annuler. Si l'agent pointe quand même ce jour-là, la présence est retenue.
+- **Absent non justifié :** jour ouvré (lundi à vendredi) passé, sans pointage ni déclaration. Les jours fériés ne sont pas gérés : ils apparaissent comme non justifiés (à annuler en déclarant une absence ou à signaler).
+- **Registre (onglet « Registre ») :** choisissez la période puis téléchargez en **Excel** ou en **PDF**. Un tableau par date (date fusionnée en titre) : nom et prénom, qualification, arrivée, départ, motif si absent, signature. Chaque date se termine par un tableau synoptique, et un synoptique général clôt le fichier. La génération se fait dans le navigateur et charge les bibliothèques ExcelJS et jsPDF depuis Internet (cdnjs / jsDelivr).
+- **Qualification :** demandée à l'inscription. Pour les agents déjà inscrits, l'administrateur la renseigne via « Modifier qualif. » (onglet Agents).
+- **Mise à jour :** collez le nouveau `Code.gs`, relancez `setup()` (nouvel onglet `Declarations`, colonne `qualif`), créez une nouvelle version du déploiement, puis remplacez `index.html` et `sw.js` sur GitHub.
+
+## 6. Installer l'application sur le téléphone
 La page doit être ouverte en **HTTPS** (GitHub Pages l'est).
 - **Android (Chrome)** : ouvrez le lien, menu ⋮ > **Installer l'application** (ou « Ajouter à l'écran d'accueil »).
 - **iPhone (Safari uniquement)** : ouvrez le lien, bouton Partager > **Sur l'écran d'accueil**.

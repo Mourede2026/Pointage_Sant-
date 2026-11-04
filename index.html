@@ -29,6 +29,7 @@ tr.r{cursor:pointer}.b{padding:2px 8px;border-radius:99px;font-size:12px;font-we
 .ok{background:var(--ac2);color:var(--ac)}.ko{background:rgba(192,57,43,.15);color:var(--rd)}.wa{background:rgba(185,119,14,.15);color:var(--or)}
 .mu{color:var(--mu);font-size:13px}.big{display:grid;grid-template-columns:1fr 1fr;gap:10px}.big button{padding:18px}
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}.d{min-height:58px;border:1px solid var(--bd);border-radius:8px;padding:3px;font-size:11px;cursor:pointer;overflow:hidden}.d b{font-size:13px}.d.ok{background:var(--ac2)}.d.wa{background:rgba(185,119,14,.2)}.d.ab{background:rgba(192,57,43,.09)}.d.out{outline:2px solid var(--rd)}.d.today{border:2px solid var(--ac)}.hd{text-align:center;font-size:12px;color:var(--mu)}.note{background:var(--ac2);border:1px solid var(--ac);border-radius:12px;padding:12px;margin-bottom:12px}
+.d.dc{background:rgba(52,120,246,.15)}
 .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}.tabs button{flex:1}.err{color:var(--rd)}
 </style></head><body>
 <h1>📍 Pointage Santé <button class="alt" id="out" style="float:right;display:none;padding:6px 10px" onclick="logout()">Quitter</button></h1>
@@ -57,65 +58,152 @@ async function boot(){$('#out').style.display=tok?'':'none';
  if(!API_URL.startsWith('https://script.google.com'))return $('#app').innerHTML='<div class="card err">Configurez API_URL dans index.html (voir README).</div>';
  try{if(!tok){STR=await api('structures');return viewLogin()}
   if(role==='agent'){ME=await api('me');return loadMonth()}
-  D=await api('adminData');viewAdmin()}catch(e){if(/Session/.test(e.message))return logout();$('#app').innerHTML=`<div class="card err">${esc(e.message)}</div>`}}
+  D=await api('adminData',PER());viewAdmin()}catch(e){if(/Session/.test(e.message))return logout();$('#app').innerHTML=`<div class="card err">${esc(e.message)}</div>`}}
 
 /* ---------- Connexion / inscription ---------- */
 function viewLogin(){const m=mode;$('#app').innerHTML=`<div class="tabs"><button class="${m=='agent'?'':'alt'}" onclick="mode='agent';viewLogin()">Agent</button><button class="${m=='reg'?'':'alt'}" onclick="mode='reg';viewLogin()">Première inscription</button><button class="${m=='adm'?'':'alt'}" onclick="mode='adm';viewLogin()">Administrateur</button></div>
 <div class="card">`+(m=='reg'?`<h2>Premier enregistrement</h2>${STR.length?'':'<p class="err">Aucune structure disponible. Contactez l’administrateur.</p>'}
 <div class="row"><div><label>Nom</label><input id="nom"></div><div><label>Prénom</label><input id="pre"></div></div>
-<label>Structure</label><select id="str" onchange="svc()">${STR.map(s=>`<option value="${s.id}" data-t="${esc(s.type)}">${esc(s.type)} — ${esc(s.name)}</option>`).join('')}</select>
+<label>Qualification / fonction</label><input id="qual"><label>Structure</label><select id="str" onchange="svc()">${STR.map(s=>`<option value="${s.id}" data-t="${esc(s.type)}">${esc(s.type)} — ${esc(s.name)}</option>`).join('')}</select>
 <div id="svw"><label>Service</label><input id="svc"></div><label>Téléphone avec indicatif (ex. 22997000000)</label><input id="tel" type="tel">
 <label>Code PIN (4 à 6 chiffres) pour vous connecter</label><input id="pin" type="password" inputmode="numeric" maxlength="6">
 <label>Signature (au doigt)</label><canvas id="sig"></canvas><button class="alt" onclick="pad()" style="margin:6px 0 10px">Effacer</button><br><button id="go">Créer mon profil</button>`
 :m=='adm'?`<h2>Administrateur</h2><label>Téléphone</label><input id="tel" type="tel"><label>Mot de passe</label><input id="pw" type="password" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button id="go">Connexion</button>`
 :`<h2>Connexion agent</h2><label>Téléphone</label><input id="tel" type="tel"><label>Code PIN</label><input id="pin" type="password" inputmode="numeric"><button id="go">Connexion</button>`)+`</div>`;
  pad();if(m=='reg')svc();$('#go').onclick=()=>run($('#go'),async()=>{const v=i=>$('#'+i).value.trim();
-  if(m=='reg'){if(!sigOk)throw new Error('La signature est obligatoire');const r=await api('register',{nom:v('nom'),pre:v('pre'),structureId:v('str'),service:$('#svw').style.display=='none'?'':v('svc'),tel:v('tel'),pin:v('pin'),sig:$('#sig').toDataURL('image/png')});login(r.token,'agent')}
+  if(m=='reg'){if(!sigOk)throw new Error('La signature est obligatoire');const r=await api('register',{nom:v('nom'),pre:v('pre'),qualif:v('qual'),structureId:v('str'),service:$('#svw').style.display=='none'?'':v('svc'),tel:v('tel'),pin:v('pin'),sig:$('#sig').toDataURL('image/png')});login(r.token,'agent')}
   else if(m=='adm'){const r=await api('adminLogin',{tel:v('tel'),password:$('#pw').value});login(r.token,'admin')}
   else{const r=await api('login',{tel:v('tel'),pin:v('pin')});login(r.token,'agent')}})}
 function svc(){const o=$('#str').selectedOptions[0];$('#svw').style.display=o&&o.dataset.t==='Hôpital'?'':'none'}
 
 /* ---------- Agent ---------- */
-let CUR=null,MD=null,selDay=null,note=null;
+let per=new Date().toISOString().slice(0,7),CUR=null,MD=null,selDay=null,note=null;
 const MOIS=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 async function loadMonth(m){MD=await api('myMonth',{month:m});CUR=MD.month;selDay=null;viewAgent()}
 function shift(n){const[y,m]=CUR.split('-').map(Number),d=new Date(y,m-1+n,1);loadMonth(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'))}
-function viewAgent(){const a=ME,[y,mo]=CUR.split('-').map(Number),n=new Date(y,mo,0).getDate(),off=(new Date(y,mo-1,1).getDay()+6)%7,by={};
+const LBL={mission:'Mission',conge:'Congé',permission:'Permission',absence:'Absence'},fmtD=d=>d.split('-').reverse().join('/');
+function viewAgent(){const a=ME,[y,mo]=CUR.split('-').map(Number),n=new Date(y,mo,0).getDate(),off=(new Date(y,mo-1,1).getDay()+6)%7,by={},dm={};
  MD.records.forEach(r=>(by[r.day]=by[r.day]||[]).push(r));
- let pres=0,late=0,full=0,miss=0,abs=0;const out=MD.records.filter(r=>r.inZone=='non').length;
- Object.keys(by).forEach(d=>{const ar=by[d].some(r=>r.type=='arrivee');if(ar){pres++;if(by[d].find(r=>r.type=='arrivee').late=='oui')late++;if(by[d].some(r=>r.type=='depart'))full++;else if(d<MD.today)miss++}});
+ (MD.decl||[]).forEach(x=>{for(let t=new Date(x.start+'T00:00:00Z');t.toISOString().slice(0,10)<=x.end;t=new Date(t.getTime()+864e5)){const k=t.toISOString().slice(0,10);if(k.startsWith(CUR)&&!dm[k])dm[k]=x}});
+ let pres=0,late=0,miss=0,abs=0;const dc={mission:0,conge:0,permission:0,absence:0};
+ Object.keys(by).forEach(d=>{const ar=by[d].find(r=>r.type=='arrivee');if(ar){pres++;if(ar.late=='oui')late++;if(!by[d].some(r=>r.type=='depart')&&d<MD.today)miss++}});
  let cells='';for(let i=0;i<off;i++)cells+='<div></div>';
- for(let i=1;i<=n;i++){const ds=CUR+'-'+String(i).padStart(2,'0'),wd=new Date(y,mo-1,i).getDay(),rs=by[ds]||[],ar=rs.find(r=>r.type=='arrivee'),dp=rs.find(r=>r.type=='depart');
-  if(!ar&&ds<MD.today&&wd>0&&wd<6)abs++;
-  const cl=ar?(ar.late=='oui'?'wa':'ok'):(ds<MD.today&&wd>0&&wd<6&&!rs.length?'ab':'');
-  cells+=`<div class="d ${cl} ${rs.some(r=>r.inZone=='non')?'out':''} ${ds==MD.today?'today':''}" onclick="selDay='${ds}';viewAgent()"><b>${i}</b>${ar?`<br>⬇${ar.time}`:''}${dp?`<br>⬆${dp.time}`:''}</div>`}
- const det=selDay&&selDay.startsWith(CUR)?`<div class="card"><h2>${selDay.split('-').reverse().join('/')}</h2>${(by[selDay]||[]).map(r=>`<div>${r.type=='arrivee'?'⬇ Arrivée':'⬆ Départ'} ${r.time} ${r.late=='oui'?'<span class="b wa">Retard</span>':''}${r.inZone=='non'?'<span class="b ko">Hors zone</span>':''}<br><span class="mu">${esc(r.place)}</span></div>`).join('')||'<span class="mu">Aucun pointage ce jour.</span>'}</div>`:'';
- const nt=note?`<div class="note"><b>✅ Pointage réussi</b> — ${note.type=='arrivee'?'Arrivée':'Départ'} à ${fmt(note.ts).slice(-8,-3)}<br>${esc(note.place)}${note.late=='oui'?'<br><span class="b wa">Retard</span>':''}${note.inZone=='non'?'<br><span class="b ko">Hors zone</span>':''}<br><span class="mu">Votre pointage est enregistré chez l’administrateur.</span> <a href="#" onclick="note=null;viewAgent();return false">Fermer</a></div>`:'';
+ for(let i=1;i<=n;i++){const ds=CUR+'-'+String(i).padStart(2,'0'),wd=new Date(y,mo-1,i).getDay(),rs=by[ds]||[],ar=rs.find(r=>r.type=='arrivee'),dp=rs.find(r=>r.type=='depart'),dd=dm[ds];
+  if(!ar&&!dd&&ds<MD.today&&wd>0&&wd<6)abs++;if(dd&&!ar)dc[dd.type]++;
+  const cl=ar?(ar.late=='oui'?'wa':'ok'):dd?'dc':(ds<MD.today&&wd>0&&wd<6?'ab':'');
+  cells+=`<div class="d ${cl} ${ds==MD.today?'today':''}" onclick="selDay='${ds}';viewAgent()"><b>${i}</b>${ar?`<br>⬇${ar.time}`:''}${dp?`<br>⬆${dp.time}`:''}${!ar&&dd?`<br>${LBL[dd.type]}`:''}</div>`}
+ const dr=by[selDay]||[],det=selDay&&selDay.startsWith(CUR)?`<div class="card"><h2>${fmtD(selDay)}</h2>${dr.map(r=>`<div>${r.type=='arrivee'?'⬇ Arrivée':'⬆ Départ'} ${r.time} ${r.late=='oui'?'<span class="b wa">Retard</span>':''}<br><span class="mu">${esc(r.place)}</span></div>`).join('')||(dm[selDay]?`<span class="b wa">${LBL[dm[selDay].type]}</span> ${esc(dm[selDay].motif)}`:'<span class="mu">Aucun pointage ce jour.</span>')}</div>`:'';
+ const nt=note?`<div class="note"><b>✅ Pointage réussi</b> — ${note.type=='arrivee'?'Arrivée':'Départ'} à ${fmt(note.ts).slice(-8,-3)}<br>${esc(note.place)}${note.late=='oui'?'<br><span class="b wa">Retard</span>':''}<br><span class="mu">Votre pointage est enregistré chez l’administrateur.</span> <a href="#" onclick="note=null;viewAgent();return false">Fermer</a></div>`:'';
  $('#app').innerHTML=`${nt}<div class="card"><h2>Bonjour ${esc(a.pre)} ${esc(a.nom)}</h2><div class="mu">${esc(a.structure)}${a.service?' · '+esc(a.service):''}</div></div>
 <div class="card"><h2>Pointer</h2><div class="big"><button id="b1">⬇ Arrivée</button><button id="b2">⬆ Départ</button></div><p class="mu" id="msg">Vous devez être dans l’enceinte du centre pour pointer. Votre position est vérifiée à chaque pointage.</p></div>
 <div class="card"><div class="row" style="align-items:center;flex-wrap:nowrap"><button class="alt" onclick="shift(-1)" style="flex:0">‹</button><h2 style="text-align:center;margin:0">${MOIS[mo-1]} ${y}</h2><button class="alt" onclick="shift(1)" style="flex:0">›</button></div><br>
-<div class="stats"><div class="stat"><b>${pres}</b><span>Jours présents</span></div><div class="stat"><b>${late}</b><span>Retards</span></div><div class="stat"><b>${pres?Math.round(100*(pres-late)/pres):0}%</b><span>Ponctualité</span></div><div class="stat"><b>${abs}</b><span>Jours ouvrés sans pointage</span></div><div class="stat"><b>${miss}</b><span>Départs non pointés</span></div></div>
+<div class="stats"><div class="stat"><b>${pres}</b><span>Jours présents</span></div><div class="stat"><b>${late}</b><span>Retards</span></div><div class="stat"><b>${pres?Math.round(100*(pres-late)/pres):0}%</b><span>Ponctualité</span></div><div class="stat"><b>${dc.mission}</b><span>Jours de mission</span></div><div class="stat"><b>${dc.conge}</b><span>Jours de congé</span></div><div class="stat"><b>${dc.permission}</b><span>Jours de permission</span></div><div class="stat"><b>${dc.absence}</b><span>Absences déclarées</span></div><div class="stat"><b>${abs}</b><span>Jours sans pointage ni déclaration</span></div><div class="stat"><b>${miss}</b><span>Départs non pointés</span></div></div>
 <div class="cal">${['L','M','M','J','V','S','D'].map(x=>`<div class="hd">${x}</div>`).join('')}${cells}</div>
-<p class="mu">Vert : à l’heure · Orange : retard · Rose : aucun pointage (lun–ven). Début de service : ${esc(MD.start)}. Les jours fériés sont comptés comme jours sans pointage.</p></div>${det}`;
+<p class="mu">Vert : à l’heure · Orange : retard · Bleu : mission, congé, permission ou absence déclarée · Rose : aucun pointage (lun–ven). Début de service : ${esc(MD.start)}. Les jours fériés sont comptés comme jours sans pointage.</p></div>${det}
+<div class="card"><h2>Déclarer une mission, un congé, une permission ou une absence</h2><p class="mu">Ces jours seront marqués automatiquement dans votre dossier et dans le registre, sans pointage. Si vous pointez malgré tout ce jour-là, la présence est retenue.</p>
+<label>Type</label><select id="dtp"><option value="mission">Mission</option><option value="conge">Congé</option><option value="permission">Permission</option><option value="absence">Absence</option></select>
+<div class="row"><div><label>Du</label><input id="dfr" type="date" value="${MD.today}"></div><div><label>Au</label><input id="dto" type="date" value="${MD.today}"></div></div>
+<label>Motif ou lieu de la mission (facultatif)</label><input id="dmo"><button onclick="declare()">Enregistrer</button>
+<h2 style="margin-top:14px">Mes déclarations du mois</h2>${(MD.decl||[]).map(x=>`<div>${LBL[x.type]} · ${fmtD(x.start)} → ${fmtD(x.end)} ${esc(x.motif)} <a href="#" onclick="cancelDecl('${x.id}');return false">✕</a></div>`).join('')||'<span class="mu">Aucune</span>'}</div>`;
  ['arrivee','depart'].forEach((t,i)=>$('#b'+(i+1)).onclick=()=>punch(t))}
+async function declare(){try{await api('declare',{type:$('#dtp').value,start:$('#dfr').value,end:$('#dto').value,motif:$('#dmo').value});await loadMonth(CUR)}catch(e){alert(e.message)}}
+async function cancelDecl(id){if(!confirm('Annuler cette déclaration ?'))return;try{await api('cancelDeclaration',{id});await loadMonth(CUR)}catch(e){alert(e.message)}}
 async function punch(type){const m=$('#msg'),bs=[$('#b1'),$('#b2')];bs.forEach(b=>b.disabled=true);m.textContent='Localisation en cours…';
  let p;try{p=await pos()}catch(e){m.textContent='Position indisponible : autorisez la géolocalisation (obligatoire).';bs.forEach(b=>b.disabled=false);return}
  m.textContent='Enregistrement…';try{note=await api('punch',{type,lat:p.latitude,lng:p.longitude,acc:p.accuracy});await loadMonth();scrollTo(0,0)}catch(e){m.textContent=e.message;m.className='err';bs.forEach(b=>b.disabled=false)}}
 
 /* ---------- Administration ---------- */
 const plat=()=>D.role==='platform';
-function viewAdmin(){const T=[['rec','Pointages'],['agt','Agents']].concat(plat()?[['str','Structures'],['adm','Administrateurs']]:[['zon','Zone de travail']]);
- $('#app').innerHTML=`<div class="tabs">${T.map(t=>`<button class="${tab==t[0]?'':'alt'}" onclick="tab='${t[0]}';sel=null;viewAdmin()">${t[1]}</button>`).join('')}</div>`+({rec:vRec,agt:vAgt,str:vStr,adm:vAdm,zon:vZon}[tab])()}
-function vRec(){const ref=r=>r.status==='refusé',R=D.records.filter(r=>!filt||r.structureId===filt),arr=R.filter(r=>r.type=='arrivee'&&!ref(r)),late=arr.filter(r=>r.late=='oui').length,out=R.filter(ref).length;
- if(sel){const r=D.records.find(x=>x.ref==sel),a=D.agents.find(x=>x.id==r.agentId)||{};return `<div class="card"><button class="alt" onclick="sel=null;viewAdmin()">← Retour</button><h2 style="margin-top:10px">Preuve ${esc(r.ref)}</h2><p>${esc(r.name)} · ${esc(r.structure)}<br>${fmt(r.ts)} · ${r.type}<br><b>${esc(r.place)}</b><br>${r.status==='refusé'?'<span class="b ko">Tentative refusée</span><br>':''}GPS ${(+r.lat).toFixed(5)}, ${(+r.lng).toFixed(5)} (±${r.acc} m) · <a target="_blank" href="https://www.google.com/maps?q=${r.lat},${r.lng}">carte</a></p>
- <div><label>Signature</label><br><img class="fp" style="width:140px;background:#fff" src="${esc(a.sigUrl)}"></div></div>`}
- const per={};arr.forEach(r=>{const p=per[r.agentId]=per[r.agentId]||{n:r.name,a:0,l:0};p.a++;if(r.late=='oui')p.l++});
- return `${!plat()&&!D.zones.length?'<div class="note">⚠️ Aucune zone de travail n’est définie pour votre structure : les agents ne peuvent pas pointer. Ouvrez l’onglet « Zone de travail ».</div>':''}<div class="card"><label>Structure</label><select onchange="filt=this.value;viewAdmin()"><option value="">Toutes</option>${D.structures.map(s=>`<option value="${s.id}" ${filt==s.id?'selected':''}>${esc(s.type)} — ${esc(s.name)}</option>`).join('')}</select></div>
-<div class="stats"><div class="stat"><b>${arr.length}</b><span>Arrivées</span></div><div class="stat"><b>${late}</b><span>Retards</span></div><div class="stat"><b>${arr.length?Math.round(100*(arr.length-late)/arr.length):0}%</b><span>Ponctualité</span></div><div class="stat"><b style="color:var(--rd)">${out}</b><span>Tentatives refusées (hors zone)</span></div></div>
-<div class="card"><h2>Pointages</h2><div class="wrap"><table><tr><th>Date</th><th>Agent</th><th>Type</th><th>Lieu</th><th>État</th></tr>${R.slice(0,200).map(r=>`<tr class="r" onclick="sel='${r.ref}';viewAdmin()"><td>${fmt(r.ts)}</td><td>${esc(r.name)}</td><td>${r.type=='arrivee'?'Arrivée':'Départ'}</td><td>${esc(r.place.slice(0,45))}</td><td>${ref(r)?'<span class="b ko">Refusé · hors zone</span>':r.late=='oui'?'<span class="b wa">Retard</span>':'<span class="b ok">OK</span>'}</td></tr>`).join('')}</table></div></div>
-<div class="card"><h2>Ponctualité par agent</h2><div class="wrap"><table><tr><th>Agent</th><th>Arrivées</th><th>Retards</th><th>Taux</th></tr>${Object.values(per).map(p=>`<tr><td>${esc(p.n)}</td><td>${p.a}</td><td>${p.l}</td><td>${Math.round(100*(p.a-p.l)/p.a)}%</td></tr>`).join('')}</table></div></div>`}
-function vAgt(){const sn=id=>{const s=D.structures.find(x=>x.id==id);return s?s.name:''};return `<div class="card"><h2>Agents inscrits (${D.agents.length})</h2><div class="wrap"><table><tr><th>Nom</th><th>Structure</th><th>Service</th><th>Téléphone</th><th>Inscrit</th></tr>${D.agents.map(a=>`<tr><td>${esc(a.pre+' '+a.nom)}</td><td>${esc(sn(a.structureId))}</td><td>${esc(a.service)}</td><td>${esc(a.tel)}</td><td>${fmt(a.created)}</td></tr>`).join('')}</table></div></div>`}
-const TYPES=['Centre de santé','Hôpital','Bureau de zone','Direction Départementale de la Santé'];
+function viewAdmin(){const T=[['rec','Pointages'],['reg','Registre'],['agt','Agents']].concat(plat()?[['str','Structures'],['adm','Administrateurs']]:[['zon','Zone de travail']]);
+ $('#app').innerHTML=`<div class="tabs">${T.map(t=>`<button class="${tab==t[0]?'':'alt'}" onclick="tab='${t[0]}';sel=null;viewAdmin()">${t[1]}</button>`).join('')}</div>`+({rec:vRec,reg:vReg,agt:vAgt,str:vStr,adm:vAdm,zon:vZon}[tab])()}
+/*REG-START*/
+const loc=ts=>new Date(new Date(ts).getTime()+36e5).toISOString(),todayS=()=>loc(new Date().toISOString()).slice(0,10);
+function monthEnd(m){const[y,mo]=m.split('-').map(Number);return m+'-'+String(new Date(y,mo,0).getDate()).padStart(2,'0')}
+function synOf(rows){const c={present:0,retard:0,mission:0,conge:0,permission:0,absence:0,nj:0};rows.forEach(r=>{if(c[r.k]!==undefined)c[r.k]++});const ef=rows.filter(r=>r.k!=='repos').length,pr=c.present+c.retard;return Object.assign({ef,pr},c,{tp:ef?Math.round(100*pr/ef):0,tn:pr?Math.round(100*(pr-c.retard)/pr):0})}
+function buildReg(from,to,st,data){
+ const ags=data.agents.filter(a=>!st||a.structureId===st).sort((x,y)=>(x.nom+x.pre).localeCompare(y.nom+y.pre)),recs={};
+ data.records.filter(r=>r.status!=='refusé'&&(!st||r.structureId===st)).forEach(r=>{const l=loc(r.ts),d=l.slice(0,10),m=recs[d]=recs[d]||{};(m[r.agentId]=m[r.agentId]||[]).push({t:r.type,h:l.slice(11,16),late:r.late==='oui'})});
+ const decl=data.declarations.filter(x=>!st||x.structureId===st).sort((x,y)=>y.created.localeCompare(x.created)),today=todayS(),days=[];
+ for(let t=new Date(from+'T00:00:00Z');t.toISOString().slice(0,10)<=to;t=new Date(t.getTime()+864e5)){
+  const d=t.toISOString().slice(0,10),wd=t.getUTCDay();if(d>today)break;if((wd===0||wd===6)&&!recs[d])continue;
+  const rows=ags.filter(a=>a.created.slice(0,10)<=d||(recs[d]&&recs[d][a.id])).map(a=>{
+   const rr=(recs[d]||{})[a.id]||[],ar=rr.filter(x=>x.t==='arrivee').sort((x,y)=>x.h.localeCompare(y.h))[0],dp=rr.filter(x=>x.t==='depart').sort((x,y)=>y.h.localeCompare(x.h))[0],dc=decl.find(x=>x.agentId===a.id&&x.start<=d&&x.end>=d);
+   let k,obs='';
+   if(ar){k=ar.late?'retard':'present';obs=(ar.late?'Retard':'')+(!dp&&d<today?(ar.late?' · ':'')+'Départ non pointé':'')}
+   else if(dc){k=dc.type;obs=LBL[dc.type]+(dc.motif?' — '+dc.motif:'')}
+   else if(wd===0||wd===6)k='repos';else if(d===today){k='attente';obs='Pas encore pointé (journée en cours)'}else{k='nj';obs='Absent non justifié'}
+   return{a,k,arr:ar?ar.h:'',dep:dp?dp.h:'',obs}});
+  days.push({d,rows,syn:synOf(rows)})}
+ return days}
+/*REG-END*/
+function PER(){return{from:per+'-01',to:monthEnd(per)}}
+async function refresh(){try{D=await api('adminData',PER());viewAdmin()}catch(e){alert(e.message)}}
+function vRec(){const ref=r=>r.status==='refusé';
+ if(sel){const r=D.records.find(x=>x.ref==sel);if(r){const a=D.agents.find(x=>x.id==r.agentId)||{};return `<div class="card"><button class="alt" onclick="sel=null;viewAdmin()">← Retour</button><h2 style="margin-top:10px">Pointage ${esc(r.ref)}</h2><p>${esc(r.name)} · ${esc(r.structure)}<br>${fmt(r.ts)} · ${r.type}<br><b>${esc(r.place)}</b><br>${ref(r)?'<span class="b ko">Tentative refusée</span><br>':''}GPS ${(+r.lat).toFixed(5)}, ${(+r.lng).toFixed(5)} (±${r.acc} m) · <a target="_blank" href="https://www.google.com/maps?q=${r.lat},${r.lng}">carte</a></p><div><label>Signature</label><br><img class="fp" style="width:140px;background:#fff" src="${esc(a.sigUrl)}"></div></div>`}}
+ const P=PER(),to=P.to<todayS()?P.to:todayS(),R=D.records.filter(r=>!filt||r.structureId===filt),days=P.from<=to?buildReg(P.from,to,filt,D):[],agg={},T={present:0,retard:0,mission:0,conge:0,permission:0,absence:0,nj:0};
+ days.forEach(dy=>dy.rows.forEach(r=>{if(r.k==='repos'||r.k==='attente')return;const g=agg[r.a.id]=agg[r.a.id]||{n:r.a.pre+' '+r.a.nom,present:0,retard:0,mission:0,conge:0,permission:0,absence:0,nj:0};g[r.k]++;T[r.k]++}));
+ const pr=T.present+T.retard,tile=(v,l,st)=>`<div class="stat"><b ${st?`style="${st}"`:''}>${v}</b><span>${l}</span></div>`;
+ return `${!plat()&&!D.zones.length?'<div class="note">⚠️ Aucune zone de travail n’est définie pour votre structure : les agents ne peuvent pas pointer. Ouvrez l’onglet « Zone de travail ».</div>':''}<div class="card"><div class="row"><div><label>Mois</label><input type="month" value="${per}" onchange="per=this.value||per;refresh()"></div><div><label>Structure</label><select onchange="filt=this.value;viewAdmin()"><option value="">Toutes</option>${D.structures.map(s=>`<option value="${s.id}" ${filt==s.id?'selected':''}>${esc(s.type)} — ${esc(s.name)}</option>`).join('')}</select></div></div></div>
+<div class="stats">${tile(pr,'Présences (jours-agents)')}${tile(T.retard,'Dont retards')}${tile((pr?Math.round(100*(pr-T.retard)/pr):0)+'%','Ponctualité')}${tile(T.mission,'Missions')}${tile(T.conge,'Congés')}${tile(T.permission,'Permissions')}${tile(T.absence,'Absences déclarées')}${tile(T.nj,'Absences non justifiées','color:var(--rd)')}${tile(R.filter(ref).length,'Tentatives refusées (hors zone)')}</div>
+<div class="card"><h2>Bilan par agent</h2><div class="wrap"><table><tr><th>Agent</th><th>Présent</th><th>Retards</th><th>Mission</th><th>Congé</th><th>Permission</th><th>Absence</th><th>Non justifié</th><th>Présence</th></tr>${Object.values(agg).map(g=>{const p=g.present+g.retard,t=p+g.mission+g.conge+g.permission+g.absence+g.nj;return `<tr><td>${esc(g.n)}</td><td>${p}</td><td>${g.retard}</td><td>${g.mission}</td><td>${g.conge}</td><td>${g.permission}</td><td>${g.absence}</td><td>${g.nj}</td><td>${t?Math.round(100*p/t):0}%</td></tr>`}).join('')}</table></div></div>
+<div class="card"><h2>Pointages</h2><div class="wrap"><table><tr><th>Date</th><th>Agent</th><th>Type</th><th>Lieu</th><th>État</th></tr>${R.slice(0,200).map(r=>`<tr class="r" onclick="sel='${r.ref}';viewAdmin()"><td>${fmt(r.ts)}</td><td>${esc(r.name)}</td><td>${r.type=='arrivee'?'Arrivée':'Départ'}</td><td>${esc(r.place.slice(0,45))}</td><td>${ref(r)?'<span class="b ko">Refusé · hors zone</span>':r.late=='oui'?'<span class="b wa">Retard</span>':'<span class="b ok">OK</span>'}</td></tr>`).join('')}</table></div></div>`}
+/* ---------- Registre : export Excel / PDF ---------- */
+const EXJS=['https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js','https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js'],PDFJS=['https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js','https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'],ATJS=['https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js','https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js'];
+function loadJs(u){return new Promise((ok,ko)=>{const t=l=>{if(!l.length)return ko(new Error('Bibliothèque d’export indisponible : vérifiez la connexion Internet.'));const s=document.createElement('script');s.src=l[0];s.onload=ok;s.onerror=()=>t(l.slice(1));document.head.appendChild(s)};t(u)})}
+const fdl=d=>new Date(d+'T12:00:00Z').toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric',timeZone:'UTC'});
+const imgDim=u=>new Promise(ok=>{const i=new Image;i.onload=()=>ok({w:i.naturalWidth,h:i.naturalHeight});i.onerror=()=>ok(null);i.src=u});
+async function dims(sig){const o={};for(const k in sig)o[k]=await imgDim(sig[k]);return o}
+const fit=(d,bw,bh)=>{if(!d)return[bw,bh];const k=Math.min(bw/d.w,bh/d.h);return[d.w*k,d.h*k]};
+function dl(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},4000)}
+const synHead=['Effectif','Présents','Dont retards','Mission','Congé','Permission','Absence déclarée','Non justifiés','Taux de présence','Ponctualité'],synRow=s=>[s.ef,s.pr,s.retard,s.mission,s.conge,s.permission,s.absence,s.nj,s.tp+' %',s.tn+' %'];
+function totalSyn(days){const rows=days.flatMap(x=>x.rows);return synOf(rows)}
+function vReg(){const S=D.structures;const t=todayS();
+ return `<div class="card"><h2>Registre de présence</h2><p class="mu">Un tableau par date : nom et prénom, qualification, heure d’arrivée, heure de départ, motif si absent (mission, congé, permission, absence) et signature. Chaque date se termine par un tableau synoptique, et un synoptique général clôt le registre.</p>
+${plat()?`<label>Structure</label><select id="rst">${S.map(s=>`<option value="${s.id}">${esc(s.type)} — ${esc(s.name)}</option>`).join('')}</select>`:`<input type="hidden" id="rst" value="${S[0]?S[0].id:''}"><p><b>${S[0]?esc(S[0].type+' — '+S[0].name):''}</b></p>`}
+<div class="row"><div><label>Du</label><input type="date" id="rf" value="${t.slice(0,8)}01"></div><div><label>Au</label><input type="date" id="rt" value="${t}"></div></div>
+<div class="row"><button onclick="exportReg('xlsx')">⬇ Excel (.xlsx)</button><button onclick="exportReg('pdf')">⬇ PDF</button></div><p class="mu" id="rmsg"></p></div>`}
+async function exportReg(kind){const m=$('#rmsg'),st=$('#rst').value,from=$('#rf').value,to=$('#rt').value;
+ if(!st)return alert('Choisissez une structure.');if(!from||!to||from>to)return alert('Période invalide.');
+ try{m.textContent='Préparation des données…';const data=await api('adminData',{from,to}),days=buildReg(from,to,st,data);if(!days.length){m.textContent='Aucune date ouvrée dans cette période.';return}
+  const ids=[...new Set(days.flatMap(x=>x.rows.filter(r=>r.arr).map(r=>r.a.id)))];m.textContent='Chargement des signatures…';const sig=ids.length?await api('signatures',{ids}):{},S=data.structures.find(s=>s.id===st),title=S.type+' — '+S.name;
+  m.textContent='Création du fichier…';if(kind==='xlsx')await makeXlsx(days,sig,title,from,to);else await makePdf(days,sig,title,from,to);m.textContent='✅ Fichier téléchargé.'}catch(e){m.textContent='';alert(e.message)}}
+async function makePdf(days,sig,title,from,to){
+ if(!window.jspdf)await loadJs(PDFJS);if(!(window.jspdf.jsPDF.API&&window.jspdf.jsPDF.API.autoTable))await loadJs(ATJS);
+ const{jsPDF}=window.jspdf,doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'}),D2=await dims(sig),green=[15,123,85];
+ days.forEach((day,i)=>{if(i)doc.addPage();doc.setFontSize(14);doc.text('REGISTRE DE PRÉSENCE — '+title,14,14);doc.setFontSize(11);doc.text(fdl(day.d),14,21);
+  const rs=day.rows.filter(r=>r.k!=='repos');
+  doc.autoTable({startY:25,head:[['N°','Nom et prénom','Qualification','Arrivée','Départ','Motif / observation','Signature']],body:rs.map((r,j)=>[j+1,r.a.nom+' '+r.a.pre,r.a.qualif||'',r.arr,r.dep,r.obs,'']),styles:{fontSize:9,valign:'middle'},headStyles:{fillColor:green},columnStyles:{0:{cellWidth:10},3:{cellWidth:18},4:{cellWidth:18},6:{cellWidth:38}},
+   didParseCell:h=>{if(h.section==='body'&&h.column.index===6)h.cell.styles.minCellHeight=14},
+   didDrawCell:h=>{if(h.section==='body'&&h.column.index===6){const r=rs[h.row.index];if(r&&r.arr&&sig[r.a.id]){const[w,hh]=fit(D2[r.a.id],h.cell.width-4,h.cell.height-2);try{doc.addImage(sig[r.a.id],'PNG',h.cell.x+(h.cell.width-w)/2,h.cell.y+(h.cell.height-hh)/2,w,hh)}catch(e){}}}}});
+  doc.setFontSize(10);doc.text('Tableau synoptique — '+fdl(day.d),14,doc.lastAutoTable.finalY+8);
+  doc.autoTable({startY:doc.lastAutoTable.finalY+10,head:[synHead],body:[synRow(day.syn)],theme:'grid',styles:{fontSize:8,halign:'center'},headStyles:{fillColor:[60,90,80]}})});
+ doc.addPage();doc.setFontSize(14);doc.text('TABLEAU SYNOPTIQUE GÉNÉRAL — '+title,14,14);doc.setFontSize(10);doc.text('Du '+fmtD(from)+' au '+fmtD(to),14,20);
+ doc.autoTable({startY:24,head:[['Date',...synHead]],body:[...days.map(x=>[fmtD(x.d),...synRow(x.syn)]),['TOTAL',...synRow(totalSyn(days))]],theme:'grid',styles:{fontSize:8,halign:'center'},headStyles:{fillColor:green},didParseCell:h=>{if(h.row.index===days.length)h.cell.styles.fontStyle='bold'}});
+ const n=doc.getNumberOfPages();for(let p=1;p<=n;p++){doc.setPage(p);doc.setFontSize(8);doc.text('Page '+p+'/'+n+' — généré le '+fmtD(todayS()),14,205)}
+ doc.save('registre-'+from+'_'+to+'.pdf')}
+async function makeXlsx(days,sig,title,from,to){
+ if(!window.ExcelJS)await loadJs(EXJS);
+ const wb=new ExcelJS.Workbook(),ws=wb.addWorksheet('Registre',{pageSetup:{orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0}}),D2=await dims(sig),thin={style:'thin'},bd={top:thin,left:thin,bottom:thin,right:thin},fill=c=>({type:'pattern',pattern:'solid',fgColor:{argb:c}});
+ ws.columns=[{width:6},{width:30},{width:24},{width:11},{width:11},{width:40},{width:24}];let r=1;
+ ws.mergeCells(r,1,r,7);Object.assign(ws.getCell(r,1),{value:'REGISTRE DE PRÉSENCE — '+title+' (du '+fmtD(from)+' au '+fmtD(to)+')',font:{bold:true,size:14}});r+=2;
+ days.forEach(day=>{
+  ws.mergeCells(r,1,r,7);const t=ws.getCell(r,1);t.value=fdl(day.d).toUpperCase();t.font={bold:true,color:{argb:'FFFFFFFF'},size:12};t.fill=fill('FF0F7B55');t.alignment={horizontal:'center'};r++;
+  ['N°','Nom et prénom','Qualification','Arrivée','Départ','Motif / observation','Signature'].forEach((x,i)=>{const c=ws.getCell(r,i+1);c.value=x;c.font={bold:true};c.fill=fill('FFE3F3EC');c.border=bd;c.alignment={horizontal:'center'}});r++;
+  day.rows.filter(x=>x.k!=='repos').forEach((x,j)=>{[j+1,x.a.nom+' '+x.a.pre,x.a.qualif||'',x.arr,x.dep,x.obs,''].forEach((v,i)=>{const c=ws.getCell(r,i+1);c.value=v;c.border=bd;c.alignment={vertical:'middle',wrapText:true,horizontal:i===3||i===4||i===0?'center':'left'}});
+   ws.getRow(r).height=40;if(x.arr&&sig[x.a.id]){const[w,h]=fit(D2[x.a.id],150,50),id=wb.addImage({base64:sig[x.a.id],extension:'png'});ws.addImage(id,{tl:{col:6.05,row:r-1+0.06},ext:{width:w,height:h}})}r++});
+  ws.mergeCells(r,1,r,7);Object.assign(ws.getCell(r,1),{value:'Tableau synoptique — '+fdl(day.d),font:{bold:true}});r++;
+  const s=day.syn,L=['Effectif','Présents (dont retards)','Mission','Congé','Permission','Absence déclarée','Non justifiés'],V=[s.ef,s.pr+' (dont '+s.retard+')',s.mission,s.conge,s.permission,s.absence,s.nj];
+  L.forEach((x,i)=>{const c=ws.getCell(r,i+1);c.value=x;c.font={bold:true,size:9};c.fill=fill('FFEFEFEF');c.border=bd;c.alignment={horizontal:'center',wrapText:true}});r++;
+  V.forEach((x,i)=>{const c=ws.getCell(r,i+1);c.value=x;c.border=bd;c.alignment={horizontal:'center'}});r++;
+  ws.mergeCells(r,1,r,7);Object.assign(ws.getCell(r,1),{value:'Taux de présence : '+s.tp+' %  ·  Ponctualité : '+s.tn+' %',font:{italic:true}});r+=3});
+ const sh=wb.addWorksheet('Synoptique général');sh.columns=[{width:14},...synHead.map(()=>({width:15}))];
+ sh.addRow(['Date',...synHead]).eachCell(c=>{c.font={bold:true,color:{argb:'FFFFFFFF'}};c.fill=fill('FF0F7B55');c.border=bd;c.alignment={horizontal:'center',wrapText:true}});
+ [...days.map(x=>[fmtD(x.d),...synRow(x.syn)]),['TOTAL',...synRow(totalSyn(days))]].forEach((v,i,a)=>sh.addRow(v).eachCell(c=>{c.border=bd;c.alignment={horizontal:'center'};if(i===a.length-1)c.font={bold:true}}));
+ dl(new Blob([await wb.xlsx.writeBuffer()],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'registre-'+from+'_'+to+'.xlsx')}
+function vAgt(){const sn=id=>{const s=D.structures.find(x=>x.id==id);return s?s.name:''};
+ return `<div class="card"><h2>Agents inscrits (${D.agents.length})</h2><div class="wrap"><table><tr><th>Nom</th><th>Qualification</th><th>Structure</th><th>Service</th><th>Téléphone</th><th></th></tr>${D.agents.map(a=>`<tr><td>${esc(a.pre+' '+a.nom)}</td><td>${esc(a.qualif)}</td><td>${esc(sn(a.structureId))}</td><td>${esc(a.service)}</td><td>${esc(a.tel)}</td><td><a href="#" onclick="setQ('${a.id}');return false">Modifier qualif.</a></td></tr>`).join('')}</table></div></div>
+<div class="card"><h2>Missions, congés, permissions, absences (${per})</h2><div class="wrap"><table><tr><th>Agent</th><th>Type</th><th>Du</th><th>Au</th><th>Motif</th><th></th></tr>${D.declarations.map(x=>`<tr><td>${esc(x.name)}</td><td>${LBL[x.type]||x.type}</td><td>${fmtD(x.start)}</td><td>${fmtD(x.end)}</td><td>${esc(x.motif)}</td><td><a href="#" onclick="if(confirm('Annuler cette déclaration ?'))rm('cancelDeclaration',{id:'${x.id}'});return false">✕</a></td></tr>`).join('')||'<tr><td colspan="6" class="mu">Aucune</td></tr>'}</table></div></div>`}
+function setQ(id){const q=prompt('Qualification / fonction :');if(q)rm('setQualif',{agentId:id,qualif:q})}
 const zoneNote=()=>ZD?`<div class="note"><b>Zone « ${esc(ZD.name)} »</b> — ${ZD.pts.length} point(s) · tolérance ${ZD.tol} m<br>Marchez le long de la clôture et appuyez sur « Point ici » à chaque angle, dans l’ordre.<br><br><button onclick="zonePt()">+ Point ici</button> <button class="alt" onclick="ZD.pts.pop();viewAdmin()">Annuler le dernier</button> <button onclick="zoneEnd()" ${ZD.pts.length<3?'disabled':''}>Terminer</button> <button class="off" onclick="ZD=null;viewAdmin()">Abandonner</button></div>`:'';
 const zoneList=s=>`<span class="mu">Zones :</span> ${D.zones.filter(z=>z.structureId==s.id).map(z=>`<div>${esc(z.name)} (${z.poly?JSON.parse(z.poly).length+' points':z.rad+' m'}, tolérance ${z.tol||20} m) <a href="#" onclick="if(confirm('Supprimer cette zone ?'))rm('deleteZone',{id:'${z.id}'});return false">✕</a>${z.by?`<br><span class="mu">Défini par ${esc(z.by)} le ${new Date(z.at).toLocaleDateString('fr-FR')}</span>`:''}</div>`).join('')||'<span class="mu">aucune</span>'}<br><button class="alt" onclick="zoneStart('${s.id}')">+ Zone clôturée (polygone)</button> <button class="alt" onclick="zone('${s.id}')">+ Zone circulaire</button>`;
 function vZon(){return zoneNote()+D.structures.map(s=>`<div class="card"><h2>${esc(s.type)} — ${esc(s.name)}</h2><p class="mu">Placez-vous sur place, avec votre téléphone, et délimitez l’enceinte de votre structure. Les agents ne pourront pointer que dans cette zone. L’administrateur de la plateforme voit vos zones.</p>${zoneList(s)}</div>`).join('')}
@@ -128,7 +216,7 @@ let ZD=null;
 function zoneStart(id){const n=prompt('Nom de la zone (ex. Enceinte du centre) :');if(!n)return;const t=prompt('Tolérance en mètres (marge autour de la clôture) :','20');ZD={sid:id,name:n,tol:+t||20,pts:[]};viewAdmin()}
 async function zonePt(){try{const p=await pos();if(p.accuracy>30&&!confirm('Précision faible (±'+Math.round(p.accuracy)+' m). Ajouter quand même ?'))return;ZD.pts.push([p.latitude,p.longitude]);viewAdmin()}catch(e){alert('Position indisponible : autorisez la géolocalisation.')}}
 function zoneEnd(){const z=ZD;ZD=null;rm('addZone',{structureId:z.sid,name:z.name,tol:z.tol,poly:z.pts})}
-async function rm(a,d){try{await api(a,d);D=await api('adminData');viewAdmin()}catch(e){alert(e.message)}}
+async function rm(a,d){try{await api(a,d);D=await api('adminData',PER());viewAdmin()}catch(e){alert(e.message)}}
 async function zone(id){const n=prompt('Nom du lieu de travail (ex. Entrée principale) :');if(!n)return;const rad=+prompt('Rayon autorisé en mètres :','150');try{const p=await pos();rm('addZone',{structureId:id,name:n,lat:p.latitude,lng:p.longitude,rad})}catch(e){alert('Position indisponible. Faites-le depuis le lieu de travail.')}}
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 boot();
