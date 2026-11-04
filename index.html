@@ -67,7 +67,7 @@ function viewLogin(){const m=mode;$('#app').innerHTML=`<div class="tabs"><button
 <div id="svw"><label>Service</label><input id="svc"></div><label>Téléphone avec indicatif (ex. 22997000000)</label><input id="tel" type="tel">
 <label>Code PIN (4 à 6 chiffres) pour vous connecter</label><input id="pin" type="password" inputmode="numeric" maxlength="6">
 <label>Signature (au doigt)</label><canvas id="sig"></canvas><button class="alt" onclick="pad()" style="margin:6px 0 10px">Effacer</button>${fpIn('fp0')}<br><button id="go">Créer mon profil</button>`
-:m=='adm'?`<h2>Administrateur</h2><label>Téléphone</label><input id="tel" type="tel"><label>Mot de passe</label><input id="pw" type="password"><button id="go">Connexion</button>`
+:m=='adm'?`<h2>Administrateur</h2><label>Téléphone</label><input id="tel" type="tel"><label>Mot de passe</label><input id="pw" type="password" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button id="go">Connexion</button>`
 :`<h2>Connexion agent</h2><label>Téléphone</label><input id="tel" type="tel"><label>Code PIN</label><input id="pin" type="password" inputmode="numeric"><button id="go">Connexion</button>`)+`</div>`;
  pad();bindFp('fp0');if(m=='reg')svc();$('#go').onclick=()=>run($('#go'),async()=>{const v=i=>$('#'+i).value.trim();
   if(m=='reg'){if(!sigOk||!fpTmp)throw new Error('Signature et empreinte obligatoires');const r=await api('register',{nom:v('nom'),pre:v('pre'),structureId:v('str'),service:$('#svw').style.display=='none'?'':v('svc'),tel:v('tel'),pin:v('pin'),sig:$('#sig').toDataURL('image/png'),fp:fpTmp});fpTmp=null;login(r.token,'agent')}

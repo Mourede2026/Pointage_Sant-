@@ -113,7 +113,8 @@ const ACTIONS = {
   },
   adminLogin(b) {
     const tel = digits(b.tel);
-    if (tel && tel === digits(prop('ADMIN_PHONE')) && b.password === prop('ADMIN_PASSWORD')) return { token: tok('platform', tel) };
+    const AP = String(prop('ADMIN_PASSWORD') || '').trim();
+    if (tel && tel === digits(prop('ADMIN_PHONE')) && AP && String(b.password || '').trim() === AP) return { token: tok('platform', tel) };
     const a = rows('Admins').find(x => digits(x.phone) === tel);
     if (!a || a.hash !== hashPw(a.salt, b.password || '')) throw new Error('Identifiants incorrects');
     return { token: tok('structure', tel, { structureId: a.structureId }) };
@@ -174,3 +175,12 @@ const ACTIONS = {
   deleteAdmin(b) { platform(b); del('Admins', 'phone', digits(b.phone)); return 1; }
 };
 function platform(b) { if (verify(b.token).role !== 'platform') throw new Error('Réservé à l’administrateur de la plateforme'); }
+
+/* Diagnostic : exécutez cette fonction dans l'éditeur puis ouvrez Affichage > Journaux d'exécution */
+function diagnostic() {
+  const p = PropertiesService.getScriptProperties().getProperties();
+  Logger.log('Propriétés présentes : ' + Object.keys(p).join(', '));
+  Logger.log('ADMIN_PHONE : ' + (p.ADMIN_PHONE ? 'chiffres retenus = ' + digits(p.ADMIN_PHONE) : 'ABSENTE'));
+  Logger.log('ADMIN_PASSWORD : ' + (p.ADMIN_PASSWORD ? String(p.ADMIN_PASSWORD).trim().length + ' caractères' : 'ABSENTE'));
+  Logger.log('SECRET : ' + (p.SECRET ? 'ok' : 'ABSENTE (lancez setup())'));
+}
